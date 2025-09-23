@@ -48,7 +48,7 @@ Subcommands:
 			if _, err := exec.LookPath("cwebp"); err != nil {
 				return fmt.Errorf("cwebp is required but not found in PATH")
 			}
-			return runCmd(cmd.Context(), "cwebp", cmdArgs...)
+			return runCmd(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), "cwebp", cmdArgs...)
 		},
 		// Suggest subcommands when completing the first positional
 		ValidArgsFunction: func(cmd *cobra.Command, cmdArgs []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -69,7 +69,7 @@ Subcommands:
 			if _, err := exec.LookPath("cwebp"); err != nil {
 				return fmt.Errorf("cwebp is required but not found in PATH")
 			}
-			return imgConvert(cmd.Context(), cmdArgs[0])
+			return imgConvert(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), cmdArgs[0])
 		},
 	}
 
@@ -85,7 +85,7 @@ Subcommands:
 			if _, err := exec.LookPath("fd"); err != nil {
 				return fmt.Errorf("convert-all requires 'fd' in PATH")
 			}
-			return imgConvertAll(cmd.Context())
+			return imgConvertAll(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 
@@ -105,7 +105,7 @@ Subcommands:
 			if len(cmdArgs) > 3 {
 				extra = cmdArgs[3:]
 			}
-			return imgResize(cmd.Context(), file, w, h, extra...)
+			return imgResize(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), file, w, h, extra...)
 		},
 	}
 
@@ -115,9 +115,11 @@ Subcommands:
 		Short: "Normalize one or more filenames: lowercase, spaces->-, collapse repeated -",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
-			return imgNormalizeMany(cmd.Context(), cmdArgs)
+			del, _ := cmd.Flags().GetBool("delete")
+			return imgNormalizeMany(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), cmdArgs, del)
 		},
 	}
+	normalizeCmd.Flags().Bool("delete", false, "remove original files after creating normalized copy")
 
 	// normalize-all
 	normalizeAllCmd := &cobra.Command{
@@ -125,9 +127,11 @@ Subcommands:
 		Short: "Normalize all files in cwd (non-recursive)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
-			return imgNormalizeAll(cmd.Context())
+			del, _ := cmd.Flags().GetBool("delete")
+			return imgNormalizeAll(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), del)
 		},
 	}
+	normalizeAllCmd.Flags().Bool("delete", false, "remove original files after creating normalized copy")
 
 	// completion command to generate shell completion scripts
 	completionCmd := &cobra.Command{
@@ -141,14 +145,14 @@ Example:
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			switch cmdArgs[0] {
 			case "bash":
-				return cmd.Root().GenBashCompletion(os.Stdout)
+				return cmd.Root().GenBashCompletion(cmd.OutOrStdout())
 			case "zsh":
 				// GenZshCompletion writes zsh completion header unless noDesc is true.
-				return cmd.Root().GenZshCompletion(os.Stdout)
+				return cmd.Root().GenZshCompletion(cmd.OutOrStdout())
 			case "fish":
-				return cmd.Root().GenFishCompletion(os.Stdout, true)
+				return cmd.Root().GenFishCompletion(cmd.OutOrStdout(), true)
 			case "powershell":
-				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+				return cmd.Root().GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
 			default:
 				return fmt.Errorf("unsupported shell: %s", cmdArgs[0])
 			}
@@ -166,37 +170,37 @@ Example:
 	return nil
 }
 
-func imgConvert(ctx context.Context, file string) error {
+func imgConvert(ctx context.Context, out, errOut io.Writer, file string) error {
 	// Check file exists
 	if fi, err := os.Stat(file); err != nil || fi.IsDir() {
 		return fmt.Errorf("file does not exist or is a directory: %s", file)
 	}
 	ext := "webp"
 	base := file[:len(file)-len(filepath.Ext(file))]
-	out := fmt.Sprintf("%s.%s", base, ext)
+	outPath := fmt.Sprintf("%s.%s", base, ext)
 
-	if err := runCmd(ctx, "cwebp", file, "-o", out); err != nil {
+	if err := runCmd(ctx, out, errOut, "cwebp", file, "-o", outPath); err != nil {
 		return fmt.Errorf("cwebp conversion failed: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "Successfully converted '%s' to '%s'\n", file, out)
+	fmt.Fprintf(out, "Successfully converted '%s' to '%s'\n", file, outPath)
 	return nil
 }
 
-func imgConvertAll(ctx context.Context) error {
+func imgConvertAll(ctx context.Context, out, errOut io.Writer) error {
 	// Use fd to convert jpg and png using fd's replacement patterns.
 	cmdStrJpg := `fd . -e jpg --no-ignore -x cwebp "{}" -o "{.}.webp"`
 	cmdStrPng := `fd . -e png --no-ignore -x cwebp "{}" -o "{.}.webp"`
 
-	if err := runShell(ctx, cmdStrJpg); err != nil {
+	if err := runShell(ctx, out, errOut, cmdStrJpg); err != nil {
 		return fmt.Errorf("converting jpg files failed: %w", err)
 	}
-	if err := runShell(ctx, cmdStrPng); err != nil {
+	if err := runShell(ctx, out, errOut, cmdStrPng); err != nil {
 		return fmt.Errorf("converting png files failed: %w", err)
 	}
 	return nil
 }
 
-func imgResize(ctx context.Context, file, wStr, hStr string, extraArgs ...string) error {
+func imgResize(ctx context.Context, out, errOut io.Writer, file, wStr, hStr string, extraArgs ...string) error {
 	// Validate file
 	if fi, err := os.Stat(file); err != nil || fi.IsDir() {
 		return fmt.Errorf("file does not exist or is a directory: %s", file)
@@ -230,7 +234,7 @@ func imgResize(ctx context.Context, file, wStr, hStr string, extraArgs ...string
 		args = append(args, extraArgs...)
 	}
 
-	if err := runCmd(ctx, "cwebp", args...); err != nil {
+	if err := runCmd(ctx, out, errOut, "cwebp", args...); err != nil {
 		return fmt.Errorf("cwebp resize failed: %w", err)
 	}
 
@@ -241,7 +245,7 @@ func imgResize(ctx context.Context, file, wStr, hStr string, extraArgs ...string
 		dw, dh, derr := getImageDimensions(ctx, tmpPath)
 		if derr != nil {
 			// if we can't detect dims, leave zeros as-is but still write file
-			fmt.Fprintf(os.Stderr, "warning: failed to determine dimensions: %v\n", derr)
+			fmt.Fprintf(errOut, "warning: failed to determine dimensions: %v\n", derr)
 		} else {
 			if w == 0 {
 				finalW = dw
@@ -259,14 +263,14 @@ func imgResize(ctx context.Context, file, wStr, hStr string, extraArgs ...string
 	ext = ext[1:] // remove leading dot
 
 	base := file[:len(file)-len(filepath.Ext(file))]
-	out := fmt.Sprintf("%s-w%d-h%d.%s", base, finalW, finalH, ext)
+	outPath := fmt.Sprintf("%s-w%d-h%d.%s", base, finalW, finalH, ext)
 
 	// copy tmpPath to out
-	if err := copyFile(tmpPath, out); err != nil {
+	if err := copyFile(tmpPath, outPath); err != nil {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "Successfully resized '%s' to '%s'\n", file, out)
+	fmt.Fprintf(out, "Successfully resized '%s' to '%s'\n", file, outPath)
 	return nil
 }
 
@@ -275,7 +279,9 @@ func imgResize(ctx context.Context, file, wStr, hStr string, extraArgs ...string
 // - replace spaces with '-'
 // - collapse repeated '-' into a single '-'
 // The file's extension is preserved (and lowercased). Operates on the provided path.
-func imgNormalize(ctx context.Context, path string) error {
+// By default this will NOT move the original file; it will create a normalized copy.
+// If deleteOrig is true, the original file will be removed after the copy.
+func imgNormalize(ctx context.Context, out, errOut io.Writer, path string, deleteOrig bool) error {
 	// Check file exists and is not a directory
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -306,27 +312,37 @@ func imgNormalize(ctx context.Context, path string) error {
 	newPath := filepath.Join(dir, newName)
 	// if name unchanged, nothing to do
 	if newPath == path {
-		fmt.Fprintf(os.Stdout, "No change: '%s'\n", path)
+		fmt.Fprintf(out, "No change: '%s'\n", path)
 		return nil
 	}
 
 	// if target exists, do not overwrite
 	if _, err := os.Stat(newPath); err == nil {
-		return fmt.Errorf("target already exists, skipping rename: %s", newPath)
+		return fmt.Errorf("target already exists, skipping normalize: %s", newPath)
 	}
 
-	if err := os.Rename(path, newPath); err != nil {
-		return fmt.Errorf("failed to rename '%s' -> '%s': %w", path, newPath, err)
+	// Create normalized copy instead of moving by default
+	if err := copyFile(path, newPath); err != nil {
+		return fmt.Errorf("failed to create normalized file '%s' from '%s': %w", newPath, path, err)
 	}
-	fmt.Fprintf(os.Stdout, "Renamed '%s' -> '%s'\n", path, newPath)
+
+	if deleteOrig {
+		if err := os.Remove(path); err != nil {
+			// If deletion fails, attempt to remove the new file to avoid partial state? Just report error.
+			return fmt.Errorf("created '%s' but failed to remove original '%s': %w", newPath, path, err)
+		}
+		fmt.Fprintf(out, "Renamed '%s' -> '%s'\n", path, newPath)
+	} else {
+		fmt.Fprintf(out, "Created '%s' from '%s'\n", newPath, path)
+	}
 	return nil
 }
 
 // imgNormalizeMany normalizes multiple files and aggregates errors.
-func imgNormalizeMany(ctx context.Context, files []string) error {
+func imgNormalizeMany(ctx context.Context, out, errOut io.Writer, files []string, deleteOrig bool) error {
 	var errs []string
 	for _, f := range files {
-		if err := imgNormalize(ctx, f); err != nil {
+		if err := imgNormalize(ctx, out, errOut, f, deleteOrig); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", f, err))
 		}
 	}
@@ -337,7 +353,7 @@ func imgNormalizeMany(ctx context.Context, files []string) error {
 }
 
 // imgNormalizeAll normalizes all regular files in the current directory (non-recursive).
-func imgNormalizeAll(ctx context.Context) error {
+func imgNormalizeAll(ctx context.Context, out, errOut io.Writer, deleteOrig bool) error {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		return fmt.Errorf("reading current directory failed: %w", err)
@@ -349,7 +365,7 @@ func imgNormalizeAll(ctx context.Context) error {
 			continue
 		}
 		name := e.Name()
-		if err := imgNormalize(ctx, name); err != nil {
+		if err := imgNormalize(ctx, out, errOut, name, deleteOrig); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
 		}
 	}
@@ -381,19 +397,35 @@ func normalizeName(s string) string {
 	return out
 }
 
-func runCmd(ctx context.Context, name string, args ...string) error {
+func runCmd(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if stdout != nil {
+		cmd.Stdout = stdout
+	} else {
+		cmd.Stdout = os.Stdout
+	}
+	if stderr != nil {
+		cmd.Stderr = stderr
+	} else {
+		cmd.Stderr = os.Stderr
+	}
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func runShell(ctx context.Context, cmdStr string) error {
+func runShell(ctx context.Context, stdout, stderr io.Writer, cmdStr string) error {
 	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr)
+	if stdout != nil {
+		cmd.Stdout = stdout
+	} else {
+		cmd.Stdout = os.Stdout
+	}
+	if stderr != nil {
+		cmd.Stderr = stderr
+	} else {
+		cmd.Stderr = os.Stderr
+	}
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
