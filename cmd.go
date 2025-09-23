@@ -32,8 +32,8 @@ func Run(ctx context.Context, args []string) error {
 Subcommands:
   convert <file>              Convert a single image to <basename>.webp
   convert-all                 Convert all jpg/png files in cwd to webp (requires fd)
-  resize <file> <width> <height> [cwebp args...]
-                             Resize an image and write <basename>-w{width}-h{height}.{ext}
+  resize --file <file> --width <width> --height <height> [cwebp args...]
+							 Resize an image and write <basename>-w{width}-h{height}.{ext}
   normalize <file> [file... ] Normalize one or more filenames: lowercase, spaces -> -, collapse repeated -
   normalize-all               Normalize all files in cwd (non-recursive)
   (no subcommand)             Any args are forwarded to cwebp
@@ -86,25 +86,34 @@ Subcommands:
 		},
 	}
 
-	// resize
+	// resize - required parameters moved to flags: --file --width --height
 	resizeCmd := &cobra.Command{
-		Use:   "resize <file> <width> <height> [cwebp args...]",
+		Use:   "resize --file <file> --width <width> --height <height> [cwebp args...]",
 		Short: "Resize an image and write <basename>-w{width}-h{height}.{ext}",
-		Args:  cobra.MinimumNArgs(3),
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			if _, err := exec.LookPath("cwebp"); err != nil {
 				return fmt.Errorf("cwebp is required but not found in PATH")
 			}
-			file := cmdArgs[0]
-			w := cmdArgs[1]
-			h := cmdArgs[2]
+			file, _ := cmd.Flags().GetString("file")
+			width, _ := cmd.Flags().GetInt("width")
+			height, _ := cmd.Flags().GetInt("height")
+
+			// positional args after flags are passed as extra cwebp args
 			extra := []string{}
-			if len(cmdArgs) > 3 {
-				extra = cmdArgs[3:]
+			if len(cmdArgs) > 0 {
+				extra = cmdArgs
 			}
-			return imgResize(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), file, w, h, extra...)
+
+			return imgResize(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), file, strconv.Itoa(width), strconv.Itoa(height), extra...)
 		},
 	}
+	resizeCmd.Flags().String("file", "", "input file to resize")
+	resizeCmd.Flags().Int("width", 0, "width to resize to (0 to auto)")
+	resizeCmd.Flags().Int("height", 0, "height to resize to (0 to auto)")
+	_ = resizeCmd.MarkFlagRequired("file")
+	_ = resizeCmd.MarkFlagRequired("width")
+	_ = resizeCmd.MarkFlagRequired("height")
 
 	// normalize (one or more files)
 	normalizeCmd := &cobra.Command{
