@@ -31,7 +31,7 @@ func Run(ctx context.Context, args []string) error {
 
 Subcommands:
   convert <file>              Convert a single image to <basename>.webp
-  convert-all                 Convert all jpg/png files in cwd to webp (requires fd)
+  convert-all                 Convert all jpg/png files in cwd to webp
   resize --file <file> --width <width> --height <height> [cwebp args...]
 							 Resize an image and write <basename>-w{width}-h{height}.{ext}
   normalize <file> [file... ] Normalize one or more filenames: lowercase, spaces -> -, collapse repeated -
@@ -73,14 +73,11 @@ Subcommands:
 	// convert-all
 	convertAllCmd := &cobra.Command{
 		Use:   "convert-all",
-		Short: "Convert all jpg/png files in cwd to webp (requires fd)",
+		Short: "Convert all jpg/png files in cwd to webp",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			if _, err := exec.LookPath("cwebp"); err != nil {
 				return fmt.Errorf("cwebp is required but not found in PATH")
-			}
-			if _, err := exec.LookPath("fd"); err != nil {
-				return fmt.Errorf("convert-all requires 'fd' in PATH")
 			}
 			return imgConvertAll(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -197,15 +194,35 @@ func imgConvert(ctx context.Context, out, errOut io.Writer, files ...string) err
 }
 
 func imgConvertAll(ctx context.Context, out, errOut io.Writer) error {
-	// Use fd to convert jpg and png using fd's replacement patterns.
-	cmdStrJpg := `fd . -e jpg --no-ignore -x cwebp "{}" -o "{.}.webp"`
-	cmdStrPng := `fd . -e png --no-ignore -x cwebp "{}" -o "{.}.webp"`
-
-	if err := runShell(ctx, out, errOut, cmdStrJpg); err != nil {
-		return fmt.Errorf("converting jpg files failed: %w", err)
+	// Find jpg/jpeg/png files (recursive) starting at current directory and convert them.
+	var errs []error
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// collect and continue
+			errs = append(errs, fmt.Errorf("%s: %w", path, walkErr))
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		switch ext {
+		case ".jpg", ".jpeg", ".png":
+			base := path[:len(path)-len(ext)]
+			outPath := fmt.Sprintf("%s.webp", base)
+			if err := runCmd(ctx, out, errOut, "cwebp", path, "-o", outPath); err != nil {
+				errs = append(errs, fmt.Errorf("failed to convert %s: %v", path, err))
+			} else {
+				fmt.Fprintf(out, "Successfully converted '%s' to '%s'\n", path, outPath)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walking directory failed: %w", err)
 	}
-	if err := runShell(ctx, out, errOut, cmdStrPng); err != nil {
-		return fmt.Errorf("converting png files failed: %w", err)
+	if len(errs) > 0 {
+		return fmt.Errorf("convert-all completed with errors: %w", errors.Join(errs...))
 	}
 	return nil
 }
