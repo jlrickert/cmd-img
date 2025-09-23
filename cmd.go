@@ -50,26 +50,23 @@ Subcommands:
 			}
 			return runCmd(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), "cwebp", cmdArgs...)
 		},
-		// Suggest subcommands when completing the first positional
-		ValidArgsFunction: func(cmd *cobra.Command, cmdArgs []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			if len(cmdArgs) == 0 {
-				return []string{"convert", "convert-all", "resize", "normalize", "normalize-all", "completion"}, cobra.ShellCompDirectiveDefault
-			}
-			// Otherwise fall back to default (file) completions
-			return nil, cobra.ShellCompDirectiveDefault
-		},
 	}
 
 	// convert
 	convertCmd := &cobra.Command{
 		Use:   "convert <file>",
 		Short: "Convert a single image to <basename>.webp",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			if _, err := exec.LookPath("cwebp"); err != nil {
 				return fmt.Errorf("cwebp is required but not found in PATH")
 			}
-			return imgConvert(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), cmdArgs[0])
+			return imgConvert(
+				cmd.Context(),
+				cmd.OutOrStdout(),
+				cmd.ErrOrStderr(),
+				cmdArgs...,
+			)
 		},
 	}
 
@@ -138,9 +135,9 @@ Subcommands:
 		Use:   "completion [bash|zsh|fish|powershell]",
 		Short: "Generate shell completion script",
 		Long: `Generate shell completion script for bash, zsh, fish or powershell.
-Example:
-  img completion bash > /etc/bash_completion.d/img
-`,
+	Example:
+	  img completion bash > /etc/bash_completion.d/img
+	`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, cmdArgs []string) error {
 			switch cmdArgs[0] {
@@ -170,19 +167,21 @@ Example:
 	return nil
 }
 
-func imgConvert(ctx context.Context, out, errOut io.Writer, file string) error {
-	// Check file exists
-	if fi, err := os.Stat(file); err != nil || fi.IsDir() {
-		return fmt.Errorf("file does not exist or is a directory: %s", file)
-	}
-	ext := "webp"
-	base := file[:len(file)-len(filepath.Ext(file))]
-	outPath := fmt.Sprintf("%s.%s", base, ext)
+func imgConvert(ctx context.Context, out, errOut io.Writer, files ...string) error {
+	for _, file := range files {
+		// Check file exists
+		if fi, err := os.Stat(file); err != nil || fi.IsDir() {
+			return fmt.Errorf("file does not exist or is a directory: %s", file)
+		}
+		ext := "webp"
+		base := file[:len(file)-len(filepath.Ext(file))]
+		outPath := fmt.Sprintf("%s.%s", base, ext)
 
-	if err := runCmd(ctx, out, errOut, "cwebp", file, "-o", outPath); err != nil {
-		return fmt.Errorf("cwebp conversion failed: %w", err)
+		if err := runCmd(ctx, out, errOut, "cwebp", file, "-o", outPath); err != nil {
+			return fmt.Errorf("cwebp conversion failed: %w", err)
+		}
+		fmt.Fprintf(out, "Successfully converted '%s' to '%s'\n", file, outPath)
 	}
-	fmt.Fprintf(out, "Successfully converted '%s' to '%s'\n", file, outPath)
 	return nil
 }
 
