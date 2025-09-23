@@ -114,6 +114,8 @@ Subcommands:
 	_ = resizeCmd.MarkFlagRequired("file")
 	_ = resizeCmd.MarkFlagRequired("width")
 	_ = resizeCmd.MarkFlagRequired("height")
+	// Provide completions for --file flag restricted to common image extensions
+	_ = resizeCmd.MarkFlagFilename("file", "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "avif", "heic")
 
 	// normalize (one or more files)
 	normalizeCmd := &cobra.Command{
